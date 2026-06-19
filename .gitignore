@@ -224,8 +224,9 @@ __marimo__/
 experiments/
 # Built/processed datasets (regenerate with `just data-prep <Dataset>`)
 **/processed/
-# Raw EnzymeMap CSV (386 MB, exceeds GitHub's limit; provenance in dataset README)
-data/EnzymeMap/raw/
+# Raw dataset files: large source CSVs + fetched caches (e.g. UniProt sequences).
+# Provenance / SHA-256 are recorded in each dataset's README + build_manifest.json.
+data/*/raw/
 # Model weights / checkpoints
 **/checkpoints*/
 *.pt
