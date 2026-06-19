@@ -1,0 +1,28 @@
+# Pre-commit gate mirroring `just check`. Enable once with:
+#   uv run pre-commit install
+# Hooks run in the project's uv environment so versions match the Justfile.
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        types_or: [python, pyi]
+      - id: ruff-check
+        name: ruff check (--fix)
+        entry: uv run ruff check --fix
+        language: system
+        types_or: [python, pyi]
+      - id: pyright
+        name: pyright
+        entry: uv run pyright
+        language: system
+        pass_filenames: false
+        types: [python]
+      - id: pytest-fast
+        name: pytest (fast)
+        entry: uv run pytest -m "not slow"
+        language: system
+        pass_filenames: false
+        types: [python]

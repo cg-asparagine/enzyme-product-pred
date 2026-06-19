@@ -216,3 +216,19 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- enzyme-product-pred ---
+# macOS
+.DS_Store
+# Per-run experiment artifacts (metadata.json, metrics.json, plots/, report.pdf)
+experiments/
+# Built/processed datasets (regenerate with `just data-prep <Dataset>`)
+**/processed/
+# Raw EnzymeMap CSV (386 MB, exceeds GitHub's limit; provenance in dataset README)
+data/EnzymeMap/raw/
+# Model weights / checkpoints
+**/checkpoints*/
+*.pt
+*.pth
+*.ckpt
+*.safetensors

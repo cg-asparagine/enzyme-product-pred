@@ -1,0 +1,73 @@
+[project]
+name = "enzyme-product-pred"
+version = "0.1.0"
+description = "Prediction of the products of an enzymatic reaction"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    # Scientific / cheminformatics (used by the shared epp_core library)
+    "numpy>=1.26",
+    "pandas>=2.2",
+    "pyarrow>=16",
+    "scikit-learn>=1.4",
+    "matplotlib>=3.8",
+    "rdkit>=2024.3.1",
+    "reportlab>=4.1",
+    # Deep learning / models (used by models/<approach>/; not yet exercised)
+    "torch>=2.2",
+    "transformers>=4.44",
+    "sentencepiece>=0.2",
+    "datasets>=2.20",
+    "accelerate>=0.33",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# Single installed package: the shared library `epp_core` (src-layout). Dataset
+# folders (data/<name>/) and model folders (models/<name>/) are script directories
+# that import the installed epp_core; they are NOT installed packages.
+[tool.hatch.build.targets.wheel]
+packages = ["src/epp_core"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+    "ruff>=0.15.17",
+    "pyright>=1.1.410",
+    "pre-commit>=3.7",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "models", "data", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+include = ["src", "models", "data", "tests"]
+exclude = [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/.*",
+    "**/checkpoints*",
+]
+# Model folders are script dirs with a uniquely-named inner package; add each to
+# extraPaths so its intra-package imports resolve for pyright. (Populated as
+# models are added.)
+extraPaths = []
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers -m 'not slow'"
+markers = [
+    "slow: real training / long-running (deselected by default; run with `-m slow`)",
+    "network: requires network access (model/checkpoint downloads)",
+]
