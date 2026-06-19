@@ -23,8 +23,12 @@ just data-prep EnzymeMap_with_seq
 4. **Fetch the sequence** for every unique accession from the UniProt REST API
    (`epp_core.data.fetch_sequences`), cached to `raw/uniprot_sequences.json`
    (git-ignored; written per batch, so re-runs resume and don't re-hit the API).
-5. Drop pairs whose accession didn't resolve (obsolete / demerged / secondary
-   accessions — the count is recorded in the manifest).
+5. **Recover** accessions the live endpoint drops (obsolete / secondary) from the
+   **UniParc archive** (`epp_core.data.uniparc_sequences`, one lookup per missing
+   accession, cached to `raw/uniparc_sequences.json`). UniParc keeps every
+   sequence ever seen, so almost all are recovered; the few that remain are
+   dropped. Counts are in the manifest (`n_resolved_direct`,
+   `n_recovered_uniparc`, `n_dropped_no_seq`).
 6. Assign a grouped-random 80/10/10 split (seed 42) on the direction-collapsed
    reaction identity (forward/reverse twins stay together).
 7. Write `processed/reactions.parquet` + `build_manifest.json` (both git-ignored).
@@ -40,10 +44,11 @@ Everything in [`EnzymeMap`](../EnzymeMap/README.md), plus the enzyme columns:
 
 ## Notes / limitations
 
-- `sequence` comes from UniProtKB via the accession in `protein_refs`. Some
-  accessions don't resolve (obsolete/demerged, or secondary accessions the
-  `accessions` endpoint doesn't redirect); those pairs are dropped. See
-  `build_manifest.json` → `n_accessions_resolved` / `n_dropped_no_seq`.
+- `sequence` comes from UniProtKB (live `accessions` endpoint), with obsolete /
+  secondary accessions recovered from the UniParc archive. After both, only a
+  couple of accessions remain unresolvable; those pairs are dropped. See
+  `build_manifest.json` → `n_resolved_direct` / `n_recovered_uniparc` /
+  `n_dropped_no_seq`.
 - No sequence-length filter is applied yet; use `seq_len` to filter if needed.
 - Conditioning a model on the sequence (e.g. an ESM/ProtT5 encoder alongside the
   reaction) is the motivating use case — see the roadmap in

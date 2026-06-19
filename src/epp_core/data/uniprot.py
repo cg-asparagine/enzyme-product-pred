@@ -19,6 +19,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 
 UNIPROT_ACCESSIONS_URL = "https://rest.uniprot.org/uniprotkb/accessions"
+UNIPARC_SEARCH_URL = "https://rest.uniprot.org/uniparc/search"
 _USER_AGENT = "enzyme-product-pred/0.1 (https://github.com/cg-asparagine/enzyme-product-pred)"
 
 
@@ -105,5 +106,73 @@ def fetch_sequences(
             json.dump(cache, f)
         if sleep and start + batch_size < len(todo):
             time.sleep(sleep)
+
+    return {a: cache[a] for a in wanted if cache.get(a)}
+
+
+def _uniparc_fetch_one(accession: str, *, timeout: float = 60.0, retries: int = 3) -> str:
+    """Look up the archived sequence for one accession via UniParc, or ``""``.
+
+    UniParc keeps every sequence ever seen in any source database, so it resolves
+    obsolete / secondary accessions that the live UniProtKB endpoint drops. One
+    accession per request (UniParc search results don't echo the matched
+    cross-reference, so batched queries can't be mapped back reliably).
+    """
+    params = urllib.parse.urlencode(
+        {"query": accession, "fields": "upi,sequence", "format": "json", "size": "1"}
+    )
+    request = urllib.request.Request(
+        f"{UNIPARC_SEARCH_URL}?{params}", headers={"User-Agent": _USER_AGENT}
+    )
+    last_error: Exception | None = None
+    for attempt in range(retries):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                results = json.loads(response.read().decode("utf-8")).get("results", [])
+            if not results:
+                return ""
+            return (results[0].get("sequence") or {}).get("value") or ""
+        except (urllib.error.URLError, TimeoutError) as error:
+            last_error = error
+            if attempt < retries - 1:
+                time.sleep(2.0 * (attempt + 1))
+    raise RuntimeError(
+        f"UniParc fetch failed for {accession} after {retries} attempts: {last_error}"
+    )
+
+
+def uniparc_sequences(
+    accessions: Iterable[str],
+    *,
+    cache_path: str | Path,
+    sleep: float = 0.1,
+    save_every: int = 50,
+    fetch_one: Callable[[str], str] | None = None,
+) -> dict[str, str]:
+    """Recover archived sequences (one UniParc lookup per accession) for accessions
+    the live UniProtKB endpoint missed.
+
+    Cached to ``cache_path`` (written every ``save_every`` lookups), so it's
+    resumable and re-runs are instant. ``fetch_one`` is injectable for tests.
+    Misses are cached as ``""`` and omitted from the returned mapping.
+    """
+    fetch = fetch_one or _uniparc_fetch_one
+    cache_path = Path(cache_path)
+    cache = _load_cache(cache_path)
+    wanted = list(dict.fromkeys(accessions))
+    todo = [a for a in wanted if a not in cache]
+
+    def _save() -> None:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        with cache_path.open("w") as f:
+            json.dump(cache, f)
+
+    for i, accession in enumerate(todo):
+        cache[accession] = fetch(accession)
+        if (i + 1) % save_every == 0:
+            _save()
+        if sleep:
+            time.sleep(sleep)
+    _save()
 
     return {a: cache[a] for a in wanted if cache.get(a)}

@@ -27,6 +27,7 @@ from epp_core.data import (
     content_hash,
     fetch_sequences,
     sha256_file,
+    uniparc_sequences,
 )
 from epp_core.data.schema import VALID_SPLITS
 from epp_core.io import write_json
@@ -36,6 +37,7 @@ HERE = Path(__file__).resolve().parent
 RAW = HERE.parent / "EnzymeMap" / "raw" / "enzymemap_v2_brenda2023.csv"
 PROCESSED = HERE / "processed"
 SEQ_CACHE = HERE / "raw" / "uniprot_sequences.json"
+UNIPARC_CACHE = HERE / "raw" / "uniparc_sequences.json"
 
 DATASET_ID = "enzymemap-with-seq-v1"
 SOURCE = "enzymemap-v2-brenda2023"
@@ -146,6 +148,19 @@ def main() -> None:
     accessions = sorted(set(df["uniprot_id"]))
     print(f"Fetching sequences for {len(accessions)} unique UniProt accessions (cached)...")
     sequences = fetch_sequences(accessions, cache_path=SEQ_CACHE)
+    n_resolved_direct = len(sequences)
+
+    # Recover accessions the live endpoint dropped (obsolete/secondary) from the
+    # UniParc archive — one lookup per missing accession (cached, resumable).
+    missing = [a for a in accessions if a not in sequences]
+    n_recovered_uniparc = 0
+    if missing:
+        print(f"Recovering {len(missing)} missing accessions from the UniParc archive...")
+        recovered = uniparc_sequences(missing, cache_path=UNIPARC_CACHE)
+        n_recovered_uniparc = len(recovered)
+        sequences = {**sequences, **recovered}
+        print(f"  recovered {n_recovered_uniparc} of {len(missing)} via UniParc")
+
     df["sequence"] = df["uniprot_id"].map(lambda a: sequences.get(a, ""))
     df = cast(pd.DataFrame, df[df["sequence"] != ""].reset_index(drop=True))
     df["seq_len"] = df["sequence"].str.len()
@@ -190,6 +205,8 @@ def main() -> None:
         "build_stats": asdict(stats),
         "n_pairs_before_seq": n_pairs,
         "n_unique_accessions": len(accessions),
+        "n_resolved_direct": n_resolved_direct,
+        "n_recovered_uniparc": n_recovered_uniparc,
         "n_accessions_resolved": len(sequences),
         "n_dropped_no_seq": n_dropped_no_seq,
         "n_out": len(df),
