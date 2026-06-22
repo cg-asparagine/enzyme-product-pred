@@ -146,3 +146,35 @@ def precompute_embeddings(
         _save_embeddings(cache_path, cache)
         print(f"  embedded {min(start + _CHUNK, len(todo))}/{len(todo)} new sequences")
     return cache
+
+
+def ensure_embeddings(
+    cache_path: str | Path,
+    id_to_seq: dict[str, str],
+    *,
+    batch_size: int = 8,
+    max_residues: int = ESM_MAX_RESIDUES,
+    device: str | None = None,
+) -> dict[str, np.ndarray]:
+    """Return ``{id: vector}`` for exactly ``id_to_seq``, embedding (and caching)
+    only the ids not already cached.
+
+    Lets a training/eval run embed just the sequences it needs (e.g. a smoke
+    test's handful) while reusing the full precomputed cache when present. To
+    build the whole cache up front, prefer :func:`precompute_embeddings`
+    (chunked + resumable).
+    """
+    cache_path = Path(cache_path)
+    cache = load_embeddings(cache_path)
+    todo = [u for u in id_to_seq if u not in cache]
+    if todo:
+        vectors = embed_sequences(
+            [id_to_seq[u] for u in todo],
+            batch_size=batch_size,
+            max_residues=max_residues,
+            device=device,
+        )
+        for uid, vector in zip(todo, vectors, strict=True):
+            cache[uid] = vector
+        _save_embeddings(cache_path, cache)
+    return {uid: cache[uid] for uid in id_to_seq}

@@ -33,6 +33,29 @@ def test_load_embeddings_missing_returns_empty(tmp_path):
     assert load_embeddings(tmp_path / "nope.npz") == {}
 
 
+def test_ensure_embeddings_caches_and_subsets(tmp_path, monkeypatch):
+    from esm2_reactiont5 import embeddings as emb
+
+    seen: list[list[str]] = []
+
+    def fake_embed(seqs, **_):
+        seen.append(list(seqs))
+        return np.stack([np.full(emb.ESM_DIM, float(len(s)), np.float32) for s in seqs])
+
+    monkeypatch.setattr(emb, "embed_sequences", fake_embed)
+    cache = tmp_path / "e.npz"
+
+    out = emb.ensure_embeddings(cache, {"P1": "AAA", "P2": "AAAAA"})
+    assert set(out) == {"P1", "P2"}
+    assert np.allclose(out["P1"], 3.0)
+    assert np.allclose(out["P2"], 5.0)
+
+    seen.clear()
+    out2 = emb.ensure_embeddings(cache, {"P1": "AAA", "P3": "AA"})
+    assert set(out2) == {"P1", "P3"}  # returns only the requested subset
+    assert seen == [["AA"]]  # only the uncached id is embedded
+
+
 @pytest.mark.slow
 @pytest.mark.network
 def test_embed_sequences_real_esm():
