@@ -233,3 +233,5 @@ data/*/raw/
 *.pth
 *.ckpt
 *.safetensors
+# Precomputed embedding caches (regenerate from the dataset + a frozen encoder)
+models/**/embeddings/
