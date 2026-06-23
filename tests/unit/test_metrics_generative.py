@@ -42,6 +42,21 @@ def test_f1_at_k_known_values():
     assert f1_at_k(REFS, PREDS, 2) == pytest.approx(2 / 3)
 
 
+def test_per_k_metrics_split_multi_molecule_product_sides():
+    # The true product side is two molecules; the model predicts them dot-joined.
+    # The per-k metrics must compare molecules, not the joined side string (else a
+    # correct multi-molecule prediction scores zero, as it did before the fix).
+    refs = [["CCO", "CC=O"]]
+    preds = [["CCO.CC=O", "CCO.CCC"]]
+    assert top_k_accuracy(refs, preds, 1) == pytest.approx(1.0)  # both true molecules present
+    assert coverage_at_k(refs, preds, 1) == pytest.approx(1.0)  # 2/2 recovered
+    assert precision_at_k(refs, preds, 1) == pytest.approx(1.0)  # 2 predicted, both correct
+    assert f1_at_k(refs, preds, 1) == pytest.approx(1.0)
+    # k=2 pools in CCC (wrong), so precision drops to 2 correct of 3 predicted molecules.
+    assert precision_at_k(refs, preds, 2) == pytest.approx(2 / 3)
+    assert coverage_at_k(refs, preds, 2) == pytest.approx(1.0)
+
+
 def test_exact_set_match_requires_full_product_set():
     refs = [["CCO"], ["CCO", "CC=O"]]
     preds = [["CCO"], ["CCO", "CCO.CC=O"]]

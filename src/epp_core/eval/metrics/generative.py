@@ -35,49 +35,65 @@ def _ranked_canon(predictions: Iterable[str]) -> list[str]:
     return out
 
 
+def _top_k_molecules(predictions: Iterable[str], k: int) -> set[str]:
+    """Canonical individual product molecules drawn from the top-k predicted sides.
+
+    A prediction is a product *side* — possibly several molecules joined by ``.``
+    (e.g. a transferase's product plus a released cofactor). The per-k recovery
+    metrics below compare *molecules* (the references are individual product
+    molecules too), so each top-k side is split into its molecules before the set
+    operations; comparing a dot-joined side string against single-molecule
+    references would never match a multi-molecule product.
+    """
+    molecules: set[str] = set()
+    for side in list(predictions)[:k]:
+        for mol in side.split("."):
+            c = canonicalize(mol)
+            if c is not None:
+                molecules.add(c)
+    return molecules
+
+
 def top_k_accuracy(references: list[list[str]], predictions: list[list[str]], k: int) -> float:
-    """Fraction of reactions with at least one true product in the top-k predictions."""
+    """Fraction of reactions with at least one true product molecule in the top-k sides."""
     if not references:
         return 0.0
     hits = 0
     for refs, preds in zip(references, predictions, strict=False):
-        ref_set = _canon_set(refs)
-        topk = set(_ranked_canon(preds)[:k])
-        if ref_set & topk:
+        if _canon_set(refs) & _top_k_molecules(preds, k):
             hits += 1
     return hits / len(references)
 
 
 def coverage_at_k(references: list[list[str]], predictions: list[list[str]], k: int) -> float:
-    """Mean per-reaction recall (sensitivity) of true products within the top-k predictions.
+    """Mean per-reaction recall (sensitivity) of true product molecules in the top-k sides.
 
-    Per reaction: ``|true ∩ top-k| / |true|`` — the fraction of a reaction's true
-    products recovered. Averaged over reactions that have at least one reference.
+    Per reaction: ``|true ∩ top-k molecules| / |true|`` — the fraction of a
+    reaction's true product molecules recovered. Averaged over reactions that have
+    at least one reference.
     """
     recalls: list[float] = []
     for refs, preds in zip(references, predictions, strict=False):
         ref_set = _canon_set(refs)
         if not ref_set:
             continue
-        topk = set(_ranked_canon(preds)[:k])
+        topk = _top_k_molecules(preds, k)
         recalls.append(len(ref_set & topk) / len(ref_set))
     return sum(recalls) / len(recalls) if recalls else 0.0
 
 
 def precision_at_k(references: list[list[str]], predictions: list[list[str]], k: int) -> float:
-    """Mean per-reaction precision of the top-k predictions.
+    """Mean per-reaction precision of the molecules predicted across the top-k sides.
 
-    Per reaction: ``|true ∩ top-k| / |top-k|`` — of the (up to ``k``) distinct
-    valid products predicted, the fraction that are correct. The denominator is
-    the number of predictions actually made in the top-k slice
-    (``min(k, #valid unique preds)``), so a model that emits fewer than ``k``
-    candidates is not penalised for the empty slots. Averaged over reactions that
-    produced at least one valid prediction.
+    Per reaction: ``|true ∩ top-k molecules| / |top-k molecules|`` — of the
+    distinct valid product molecules predicted across the top-k sides, the fraction
+    that are correct. Averaged over reactions that produced at least one valid
+    molecule.
     """
     precisions: list[float] = []
     for refs, preds in zip(references, predictions, strict=False):
         ref_set = _canon_set(refs)
-        topk = set(_ranked_canon(preds)[:k])
+        topk = _top_k_molecules(preds, k)
         if not topk:
             continue
         precisions.append(len(ref_set & topk) / len(topk))
@@ -88,12 +104,12 @@ def f1_at_k(references: list[list[str]], predictions: list[list[str]], k: int) -
     """Mean per-reaction F1 — the harmonic mean of precision@k and sensitivity@k.
 
     Computed per reaction then averaged (macro), over reactions that have at least
-    one reference and one valid prediction.
+    one reference and one valid predicted molecule.
     """
     f1s: list[float] = []
     for refs, preds in zip(references, predictions, strict=False):
         ref_set = _canon_set(refs)
-        topk = set(_ranked_canon(preds)[:k])
+        topk = _top_k_molecules(preds, k)
         if not ref_set or not topk:
             continue
         tp = len(ref_set & topk)
