@@ -55,10 +55,17 @@ def assign_splits(
     group_col: str,
     fractions: tuple[float, float, float] = (0.8, 0.1, 0.1),
     seed: int = 42,
+    split_col: str = "split",
 ) -> pd.DataFrame:
-    """Return a copy of ``df`` with a ``split`` column assigned by
-    :func:`grouped_random_split` over the values in ``df[group_col]``."""
+    """Return a copy of ``df`` with a ``split_col`` column (default ``"split"``)
+    assigned by :func:`grouped_random_split` over the values in ``df[group_col]``.
+
+    Whole groups are kept together, so ``group_col`` never straddles the partition.
+    Passing a distinct ``split_col`` lets several independent splits — e.g. a
+    reaction-grouped ``split`` and an enzyme-cluster ``enzyme_split`` — coexist as
+    separate columns of the same dataframe.
+    """
     mapping = grouped_random_split(df[group_col].tolist(), fractions, seed)
     out = df.copy()
-    out["split"] = out[group_col].map(lambda group: mapping[group])
+    out[split_col] = out[group_col].map(lambda group: mapping[group])
     return out

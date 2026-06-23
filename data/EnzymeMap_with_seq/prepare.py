@@ -24,6 +24,7 @@ from epp_core.chem.reactions import undirected_reaction_key
 from epp_core.data import (
     assign_splits,
     build_reactions,
+    cluster_sequences,
     content_hash,
     fetch_sequences,
     sha256_file,
@@ -51,6 +52,17 @@ UNIPROT_DBS = ("uniprot", "swissprot")  # both are UniProtKB accessions; genbank
 # --- Split (grouped on the direction-collapsed reaction key) ---
 SPLIT_FRACTIONS = (0.8, 0.1, 0.1)
 SPLIT_SEED = 42
+
+# --- Enzyme-cluster split (sequence-similarity clustering of enzymes) ---
+# A second, independent split that holds out whole enzyme clusters so test enzymes
+# (and close homologs) are unseen in training — the honest generalization test for
+# a sequence-conditioned model. k-mer Jaccard params were chosen from a sweep on
+# this dataset: ~12k clusters, ~0.996 EC-class purity, largest cluster ~0.6% of
+# rows (the 80/10/10 partition stays balanced). Lower the threshold to merge more
+# distant homologs for a stricter holdout. See epp_core.data.cluster.
+ENZYME_CLUSTER_METHOD = "kmer"
+ENZYME_CLUSTER_K = 4
+ENZYME_CLUSTER_THRESHOLD = 0.4
 
 EXTRA_COLS = [
     "rxn_idx",
@@ -180,6 +192,27 @@ def main() -> None:
         raise SystemExit("LEAKAGE DETECTED: a reaction identity spans multiple splits")
     df = df.drop(columns=["_undirected"])
 
+    # Enzyme-cluster split: cluster enzymes by sequence similarity, then assign
+    # whole clusters to train/valid/test so homologous enzymes never straddle.
+    print(f"Clustering {df['uniprot_id'].nunique()} enzymes ({ENZYME_CLUSTER_METHOD})...")
+    clusters = cluster_sequences(
+        dict(zip(df["uniprot_id"], df["sequence"], strict=True)),
+        method=ENZYME_CLUSTER_METHOD,
+        k=ENZYME_CLUSTER_K,
+        threshold=ENZYME_CLUSTER_THRESHOLD,
+    )
+    df["enzyme_cluster"] = df["uniprot_id"].map(lambda u: clusters[u])
+    df = assign_splits(
+        df,
+        group_col="enzyme_cluster",
+        fractions=SPLIT_FRACTIONS,
+        seed=SPLIT_SEED,
+        split_col="enzyme_split",
+    )
+    cluster_spans = df.groupby("enzyme_cluster")["enzyme_split"].nunique()
+    if _to_int((cluster_spans > 1).sum()):
+        raise SystemExit("LEAKAGE DETECTED: an enzyme cluster spans multiple splits")
+
     df.to_parquet(PROCESSED / "reactions.parquet", index=False)
 
     per_split = {s: _to_int((df["split"] == s).sum()) for s in VALID_SPLITS}
@@ -200,6 +233,16 @@ def main() -> None:
             "fractions": list(SPLIT_FRACTIONS),
             "seed": SPLIT_SEED,
             "group": "undirected_reaction_key",
+        },
+        "enzyme_split": {
+            "method": ENZYME_CLUSTER_METHOD,
+            "k": ENZYME_CLUSTER_K,
+            "threshold": ENZYME_CLUSTER_THRESHOLD,
+            "fractions": list(SPLIT_FRACTIONS),
+            "seed": SPLIT_SEED,
+            "group": "enzyme_cluster",
+            "n_clusters": _to_int(df["enzyme_cluster"].nunique()),
+            "per_split": {s: _to_int((df["enzyme_split"] == s).sum()) for s in VALID_SPLITS},
         },
         "dedup_extra_cols": DEDUP_EXTRA_COLS,
         "build_stats": asdict(stats),

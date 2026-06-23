@@ -65,6 +65,38 @@ def kv_table(data: dict[str, Any], col_widths: tuple[float, float] = (2.3, 4.4))
     return table
 
 
+def grid_table(rows: Sequence[Sequence[Any]], first_col_in: float = 1.4) -> Table:
+    """A multi-column grid whose first row is the header.
+
+    The first column is given ``first_col_in`` inches; the remaining columns share
+    the rest of the page width evenly. Used for wide tables (e.g. the largest
+    enzyme clusters) where a two-column key/value layout will not do.
+    """
+    ncols = max(len(r) for r in rows)
+    cells = [[*(escape_xml(c) for c in r), *([""] * (ncols - len(r)))] for r in rows]
+    header, *body = cells
+    table_rows = [[Paragraph(f"<b>{c}</b>", GRID_CELL) for c in header]]
+    table_rows += [[Paragraph(c, GRID_CELL) for c in row] for row in body]
+
+    usable = 7.1
+    rest = (usable - first_col_in) / (ncols - 1) if ncols > 1 else usable
+    table = Table(
+        table_rows, colWidths=[first_col_in * inch, *([rest * inch] * (ncols - 1))], repeatRows=1
+    )
+    table.setStyle(
+        TableStyle(
+            [
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
+                ("BACKGROUND", (0, 0), (-1, 0), HEADER_BLUE),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("BACKGROUND", (0, 1), (0, -1), colors.whitesmoke),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ]
+        )
+    )
+    return table
+
+
 def image_flowable(path: str | Path, max_width_in: float = 5.5) -> Image:
     width_px, height_px = ImageReader(str(path)).getSize()
     width = max_width_in * inch

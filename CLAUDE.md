@@ -51,6 +51,7 @@ just data-prep <Dataset>   # build data/<Dataset>/processed/   (e.g. EnzymeMap)
 just train <Model>         # train a model               (once a model exists)
 just evaluate <Model>      # -> experiments/<run_id>/report.pdf
 just report <run_dir>      # re-render a PDF from saved JSON
+just data-report <Dataset> # dataset/split EDA PDF (clusters, splits, distributions)
 just check                 # format + lint + typecheck + fast tests (the gate)
 just test-slow             # @slow tests (real training; may download checkpoints)
 just save "<msg>"          # run check, then git add + commit + push
@@ -117,8 +118,10 @@ gate. Remote: `origin` (github.com/cg-asparagine/enzyme-product-pred).
 - **Enzyme sequences:** condition on amino-acid sequence (fetch UniProt via
   `protein_refs`, then sequence embeddings). The schema reserves room for a
   `sequence`/`uniprot_id` column; today we condition on EC number + organism text.
-- **Smarter splits:** scaffold / sequence-similarity / compound-similarity splits
-  (in `epp_core.data.split`) for honest generalization tests, replacing the v1
-  grouped-random split.
+- **Smarter splits:** a sequence-similarity **enzyme-cluster split** is built —
+  `enzyme_split` column, clustering in `epp_core.data.cluster` (k-mer Jaccard),
+  for honest *new-enzyme* generalization tests; `just data-report <Dataset>`
+  visualizes it. Still TODO: scaffold / compound-similarity splits for
+  *new-chemistry* tests, alongside the v1 reaction `split`.
 - **Models:** first a seq2seq reaction model (e.g. ReactionT5 / MolT5), then
   richer conditioning.

@@ -49,6 +49,10 @@ evaluate model *args:
 report run_dir:
     uv run python -m epp_core.report.generator --run {{run_dir}}
 
+# Render a dataset / split EDA report PDF, e.g. `just data-report EnzymeMap_with_seq`
+data-report dataset:
+    uv run python -m epp_core.report.dataset --dataset data/{{dataset}}/processed
+
 # Run `just check`, then add + commit + push
 save msg: check
     git add -A
