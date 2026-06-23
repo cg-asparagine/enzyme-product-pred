@@ -49,7 +49,11 @@ def top_k_accuracy(references: list[list[str]], predictions: list[list[str]], k:
 
 
 def coverage_at_k(references: list[list[str]], predictions: list[list[str]], k: int) -> float:
-    """Mean per-reaction recall of true products within the top-k predictions."""
+    """Mean per-reaction recall (sensitivity) of true products within the top-k predictions.
+
+    Per reaction: ``|true ∩ top-k| / |true|`` — the fraction of a reaction's true
+    products recovered. Averaged over reactions that have at least one reference.
+    """
     recalls: list[float] = []
     for refs, preds in zip(references, predictions, strict=False):
         ref_set = _canon_set(refs)
@@ -58,6 +62,46 @@ def coverage_at_k(references: list[list[str]], predictions: list[list[str]], k: 
         topk = set(_ranked_canon(preds)[:k])
         recalls.append(len(ref_set & topk) / len(ref_set))
     return sum(recalls) / len(recalls) if recalls else 0.0
+
+
+def precision_at_k(references: list[list[str]], predictions: list[list[str]], k: int) -> float:
+    """Mean per-reaction precision of the top-k predictions.
+
+    Per reaction: ``|true ∩ top-k| / |top-k|`` — of the (up to ``k``) distinct
+    valid products predicted, the fraction that are correct. The denominator is
+    the number of predictions actually made in the top-k slice
+    (``min(k, #valid unique preds)``), so a model that emits fewer than ``k``
+    candidates is not penalised for the empty slots. Averaged over reactions that
+    produced at least one valid prediction.
+    """
+    precisions: list[float] = []
+    for refs, preds in zip(references, predictions, strict=False):
+        ref_set = _canon_set(refs)
+        topk = set(_ranked_canon(preds)[:k])
+        if not topk:
+            continue
+        precisions.append(len(ref_set & topk) / len(topk))
+    return sum(precisions) / len(precisions) if precisions else 0.0
+
+
+def f1_at_k(references: list[list[str]], predictions: list[list[str]], k: int) -> float:
+    """Mean per-reaction F1 — the harmonic mean of precision@k and sensitivity@k.
+
+    Computed per reaction then averaged (macro), over reactions that have at least
+    one reference and one valid prediction.
+    """
+    f1s: list[float] = []
+    for refs, preds in zip(references, predictions, strict=False):
+        ref_set = _canon_set(refs)
+        topk = set(_ranked_canon(preds)[:k])
+        if not ref_set or not topk:
+            continue
+        tp = len(ref_set & topk)
+        precision = tp / len(topk)
+        recall = tp / len(ref_set)
+        denom = precision + recall
+        f1s.append(2 * precision * recall / denom if denom else 0.0)
+    return sum(f1s) / len(f1s) if f1s else 0.0
 
 
 def exact_set_match(references: list[list[str]], predictions: list[list[str]], k: int) -> float:

@@ -8,6 +8,7 @@ from typing import Any, cast
 import numpy as np
 import torch
 
+from epp_core.chem.tokenize import detokenize
 from epp_core.data import content_hash, load_reactions, train_product_smiles
 from epp_core.eval.types import GenerativeEvalInputs, TaskType
 from epp_core.metadata.capture import ExperimentMetadata
@@ -139,7 +140,11 @@ def _generate(
             num_return_sequences=k,
             max_length=config.max_target_length,
         )
-        decoded = tokenizer.batch_decode(generated, skip_special_tokens=True)
+        # ReactionT5's tokenizer can emit internal spaces when decoding; a space
+        # terminates a SMILES for RDKit, so strip whitespace before scoring.
+        decoded = [
+            detokenize(s) for s in tokenizer.batch_decode(generated, skip_special_tokens=True)
+        ]
         for i in range(len(srcs)):
             predictions.append(decoded[i * k : (i + 1) * k])
     return predictions

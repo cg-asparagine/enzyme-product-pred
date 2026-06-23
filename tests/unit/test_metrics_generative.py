@@ -3,8 +3,10 @@ import pytest
 from epp_core.eval.metrics.generative import (
     coverage_at_k,
     exact_set_match,
+    f1_at_k,
     novelty,
     per_molecule_validity,
+    precision_at_k,
     top_k_accuracy,
     uniqueness,
     validity,
@@ -24,6 +26,20 @@ def test_top_k_accuracy_known_values():
 def test_coverage_at_k_known_values():
     assert coverage_at_k(REFS, PREDS, 1) == pytest.approx(0.5)
     assert coverage_at_k(REFS, PREDS, 2) == pytest.approx(1.0)
+
+
+def test_precision_at_k_known_values():
+    # k=1: reaction 0 predicts CCO (1/1 correct), reaction 1 predicts CCC (0/1) -> 0.5.
+    # k=2: each reaction has 1 correct of 2 distinct predictions -> 0.5.
+    assert precision_at_k(REFS, PREDS, 1) == pytest.approx(0.5)
+    assert precision_at_k(REFS, PREDS, 2) == pytest.approx(0.5)
+
+
+def test_f1_at_k_known_values():
+    # k=1: reaction 0 F1=1.0, reaction 1 F1=0.0 -> mean 0.5.
+    # k=2: each reaction precision=0.5, recall=1.0 -> F1=2/3 -> mean 2/3.
+    assert f1_at_k(REFS, PREDS, 1) == pytest.approx(0.5)
+    assert f1_at_k(REFS, PREDS, 2) == pytest.approx(2 / 3)
 
 
 def test_exact_set_match_requires_full_product_set():

@@ -19,6 +19,10 @@ dependencies = [
     "sentencepiece>=0.2",
     "datasets>=2.20",
     "accelerate>=0.33",
+    # Local model-explorer GUI (app/) — launched with `just gui`. A browser app
+    # for visualizing reaction structures and running per-reaction inference; it
+    # is not used by training or the eval framework.
+    "streamlit>=1.36",
 ]
 
 [build-system]
@@ -42,7 +46,7 @@ dev = [
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-src = ["src", "models", "data", "tests"]
+src = ["src", "models", "data", "tests", "app"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
@@ -50,7 +54,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.pyright]
 pythonVersion = "3.12"
 typeCheckingMode = "standard"
-include = ["src", "models", "data", "tests"]
+include = ["src", "models", "data", "tests", "app"]
 exclude = [
     "**/node_modules",
     "**/__pycache__",

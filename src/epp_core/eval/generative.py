@@ -8,8 +8,10 @@ from epp_core.eval.base import Evaluator, register_evaluator
 from epp_core.eval.metrics.generative import (
     coverage_at_k,
     exact_set_match,
+    f1_at_k,
     novelty,
     per_molecule_validity,
+    precision_at_k,
     tanimoto_to_reference_distribution,
     top_k_accuracy,
     uniqueness,
@@ -35,15 +37,30 @@ class GenerativeEvaluator(Evaluator):
         raw = inputs.raw_predictions or preds
 
         metrics: list[MetricResult] = []
+        # Per-k metrics, presented as a matrix (rows = metric, columns = k) in the
+        # top_k_metrics table below rather than as flat scalars. ``accuracy`` is the
+        # hit rate (>=1 true product in the top-k); ``exact set match`` requires a
+        # prediction equal to the full product set; ``precision`` is the fraction
+        # of predicted products that are correct; ``sensitivity`` is recall (the
+        # fraction of a reaction's true products recovered).
         accuracies = [top_k_accuracy(refs, preds, k) for k in self.ks]
         exact = [exact_set_match(refs, preds, k) for k in self.ks]
+        precisions = [precision_at_k(refs, preds, k) for k in self.ks]
         coverages = [coverage_at_k(refs, preds, k) for k in self.ks]
-        for k, acc in zip(self.ks, accuracies, strict=True):
-            metrics.append(MetricResult(f"top_{k}_accuracy", acc))
-        for k, em in zip(self.ks, exact, strict=True):
-            metrics.append(MetricResult(f"exact_set_match_top_{k}", em))
-        for k, cov in zip(self.ks, coverages, strict=True):
-            metrics.append(MetricResult(f"coverage_at_{k}", cov))
+        f1s = [f1_at_k(refs, preds, k) for k in self.ks]
+
+        def _row(label: str, values: list[float]) -> list[str]:
+            return [label, *(f"{v:.4f}" for v in values)]
+
+        top_k_metrics = [
+            ["Metric", *(f"Top-{k}" for k in self.ks)],
+            _row("Accuracy (>=1 correct product)", accuracies),
+            _row("Exact set match", exact),
+            _row("Precision", precisions),
+            _row("Sensitivity (recall)", coverages),
+            _row("F1", f1s),
+        ]
+
         metrics.append(MetricResult("validity", validity(raw)))
         metrics.append(MetricResult("per_molecule_validity", per_molecule_validity(raw)))
         metrics.append(MetricResult("uniqueness", uniqueness(raw)))
@@ -63,4 +80,6 @@ class GenerativeEvaluator(Evaluator):
             plot_paths.append(
                 save_figure(plot_tanimoto_hist(sims), plots_dir / "tanimoto_hist.png")
             )
-        return EvalArtifacts(metrics=metrics, plot_paths=plot_paths)
+        return EvalArtifacts(
+            metrics=metrics, plot_paths=plot_paths, tables={"top_k_metrics": top_k_metrics}
+        )

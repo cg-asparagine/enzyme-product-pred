@@ -29,9 +29,16 @@ def test_generative_run_produces_artifacts(tmp_path):
     assert (run_dir / "report.pdf").read_bytes()[:5] == b"%PDF-"
     assert list((run_dir / "plots").glob("*.png"))
 
-    # metrics.json round-trips and includes the reaction-specific metrics.
+    # metrics.json round-trips and carries the scalar (non-per-k) metrics.
     metric_names = {m["name"] for m in read_json(run_dir / "metrics.json")}
-    assert {"top_1_accuracy", "exact_set_match_top_1", "per_molecule_validity"} <= metric_names
+    assert {"validity", "per_molecule_validity", "uniqueness", "mean_tanimoto_top1"} <= metric_names
+
+    # The per-k family (accuracy / exact-set-match / precision / sensitivity / F1)
+    # is recorded as a matrix table, one row per metric across the k columns.
+    tables = read_json(run_dir / "tables.json")
+    assert "top_k_metrics" in tables
+    row_labels = {row[0] for row in tables["top_k_metrics"][1:]}
+    assert {"Precision", "F1", "Sensitivity (recall)"} <= row_labels
 
     # metadata.json records the run id and resolved task type.
     saved = read_json(run_dir / "metadata.json")

@@ -52,6 +52,7 @@ just train <Model>         # train a model               (once a model exists)
 just evaluate <Model>      # -> experiments/<run_id>/report.pdf
 just report <run_dir>      # re-render a PDF from saved JSON
 just data-report <Dataset> # dataset/split EDA PDF (clusters, splits, distributions)
+just gui                   # launch the Streamlit model-explorer GUI (app/)
 just check                 # format + lint + typecheck + fast tests (the gate)
 just test-slow             # @slow tests (real training; may download checkpoints)
 just save "<msg>"          # run check, then git add + commit + push

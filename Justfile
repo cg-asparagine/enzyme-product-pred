@@ -45,6 +45,10 @@ train model *args:
 evaluate model *args:
     uv run python models/{{model}}/evaluate.py {{args}}
 
+# Launch the local model-explorer GUI in the browser
+gui *args:
+    uv run streamlit run app/streamlit_app.py {{args}}
+
 # Re-render a run's PDF report from its saved JSON
 report run_dir:
     uv run python -m epp_core.report.generator --run {{run_dir}}
