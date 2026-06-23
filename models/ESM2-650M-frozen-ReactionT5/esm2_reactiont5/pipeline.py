@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import torch
@@ -43,6 +43,24 @@ def _needed_embeddings(
 def train_model(config: TrainConfig) -> str:
     from transformers import AutoTokenizer, Trainer, TrainingArguments
 
+    class _ProteinTrainer(Trainer):
+        """Checkpoint the wrapper in its native (``from_pretrained_dir``) layout.
+
+        The stock ``Trainer._save`` calls ``safetensors.save_file`` on the raw wrapper
+        state dict, which raises on T5's tied embeddings (shared/encoder/decoder share
+        storage). Routing through ``model.save`` writes the T5 via ``save_pretrained``
+        (tied-weight-safe) plus ``protein_proj.pt`` + the tokenizer, so every epoch
+        checkpoint is a complete, directly-evaluable model. (Trainer
+        resume-from-checkpoint of this wrapper is not supported.)
+        """
+
+        def _save(self, output_dir: str | None = None, state_dict: Any = None) -> None:
+            out = Path(cast(str, output_dir or self.args.output_dir))
+            cast(ReactionT5WithProtein, self.accelerator.unwrap_model(self.model)).save(out)
+            if self.processing_class is not None:
+                self.processing_class.save_pretrained(out)
+            torch.save(self.args, out / "training_args.bin")
+
     device = _resolve_device(config)
     tokenizer = AutoTokenizer.from_pretrained(config.base_checkpoint)
     train_df = _subset(load_reactions(config.dataset_dir, "train"), config.max_train_samples)
@@ -72,7 +90,13 @@ def train_model(config: TrainConfig) -> str:
         use_cpu=(device == "cpu"),
         report_to=[],
     )
-    trainer = Trainer(model=model, args=args, train_dataset=train_ds, data_collator=collator)
+    trainer = _ProteinTrainer(
+        model=model,
+        args=args,
+        train_dataset=train_ds,
+        data_collator=collator,
+        processing_class=tokenizer,
+    )
     trainer.train()
 
     save_dir = Path(config.output_dir)
