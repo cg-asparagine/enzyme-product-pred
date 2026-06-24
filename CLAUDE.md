@@ -8,8 +8,8 @@ Predict the **products of an enzymatic reaction** from its reactants (substrate 
 cofactors) and the enzyme/conditions. Reactions come from **EnzymeMap v2 /
 BRENDA 2023** as reaction SMILES (`reactants>>products`). The first task framing
 is **generative**: reactant-side SMILES → product-side SMILES, optionally
-conditioned on the **EC number** and **organism** (the dataset has no amino-acid
-sequences yet — see Roadmap).
+conditioned on the enzyme — its **EC number** + **organism**, or its **amino-acid
+sequence** (attached in the `EnzymeMap_with_seq` dataset, fetched from UniProt).
 
 Multiple modelling approaches share one `data/` folder and one **task-aware
 evaluation framework** (`epp_core`) that records full model metadata +
@@ -22,7 +22,8 @@ plots.
 src/epp_core/            # SHARED library — all general, reusable code lives here
   chem/                  #   SMILES utils (canonicalize/validity/tanimoto), atom tokenizer,
                          #   reaction-SMILES helpers (split reactants>>products)
-  data/                  #   readers, deterministic build_reactions(), loaders, splits, hashing
+  data/                  #   readers, deterministic build_reactions(), loaders, splits, hashing,
+                         #   UniProt/UniParc sequence fetch, enzyme clustering
   metadata/              #   ExperimentMetadata (git/libs/device capture)
   eval/                  #   TaskType registry + generative metrics (top-k, validity, exact-set-match…)
   plots/  report/        #   matplotlib figures + ReportLab PDF
@@ -114,15 +115,14 @@ gate. Remote: `origin` (github.com/cg-asparagine/enzyme-product-pred).
 - Pandas/RDKit/transformers are loosely typed; prefer a local `cast(...)` over
   scattered `# type: ignore` when pyright over-narrows their return types.
 
-## Roadmap (not yet built)
+## Roadmap (built + planned)
 
-- **Enzyme sequences:** condition on amino-acid sequence (fetch UniProt via
-  `protein_refs`, then sequence embeddings). The schema reserves room for a
-  `sequence`/`uniprot_id` column; today we condition on EC number + organism text.
 - **Smarter splits:** a sequence-similarity **enzyme-cluster split** is built —
   `enzyme_split` column, clustering in `epp_core.data.cluster` (k-mer Jaccard),
   for honest *new-enzyme* generalization tests; `just data-report <Dataset>`
   visualizes it. Still TODO: scaffold / compound-similarity splits for
   *new-chemistry* tests, alongside the v1 reaction `split`.
-- **Models:** first a seq2seq reaction model (e.g. ReactionT5 / MolT5), then
-  richer conditioning.
+- **Models:** the first sequence-conditioned seq2seq model is built —
+  `ESM2-650M-frozen-ReactionT5` (a frozen, mean-pooled ESM-2 650M embedding
+  prepended to ReactionT5 as one "enzyme token"). Next: richer enzyme conditioning
+  and additional backbones (e.g. MolT5).
