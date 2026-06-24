@@ -2,7 +2,13 @@ import json
 
 import pytest
 
-from epp_core.data.uniprot import fetch_sequences, parse_fasta, uniparc_sequences
+from epp_core.data.uniprot import (
+    _parse_search_tsv,
+    fetch_sequences,
+    parse_fasta,
+    search_accessions,
+    uniparc_sequences,
+)
 
 FASTA = (
     ">sp|P0A9Q7|ENO_ECOLI Enolase OS=Escherichia coli\n"
@@ -79,6 +85,45 @@ def test_uniparc_sequences_recovers_and_caches(tmp_path):
     out2 = uniparc_sequences(["P1", "P2", "P3"], cache_path=cache, fetch_one=fake, sleep=0)
     assert out2 == {"P1": "SEQ1", "P3": "SEQ3"}
     assert calls == []  # fully cached -> no fetch
+
+
+def test_parse_search_tsv_drops_header():
+    assert _parse_search_tsv("Entry\nP1\nP2\n") == ["P1", "P2"]
+    assert _parse_search_tsv("Entry\n") == []  # no hits -> header only
+    assert _parse_search_tsv("") == []
+
+
+def test_search_accessions_caches_and_skips_refetch(tmp_path):
+    calls: list[tuple[str, str]] = []
+
+    def fake(ec: str, organism: str) -> list[str]:
+        calls.append((ec, organism))
+        return {("1.1.1.1", "E. coli"): ["P1", "P2"]}.get((ec, organism), [])  # other pair misses
+
+    cache = tmp_path / "acc.json"
+    queries = [("1.1.1.1", "E. coli"), ("9.9.9.9", "Nobody"), ("1.1.1.1", "E. coli")]
+    out = search_accessions(queries, cache_path=cache, fetch_one=fake, sleep=0)
+    assert out == {("1.1.1.1", "E. coli"): ["P1", "P2"]}  # miss omitted; pair de-duped
+    assert calls == [("1.1.1.1", "E. coli"), ("9.9.9.9", "Nobody")]
+
+    cached = json.loads(cache.read_text())
+    assert cached == {"1.1.1.1\tE. coli": ["P1", "P2"], "9.9.9.9\tNobody": []}  # miss cached as []
+
+    calls.clear()
+    out2 = search_accessions(queries, cache_path=cache, fetch_one=fake, sleep=0)
+    assert out2 == {("1.1.1.1", "E. coli"): ["P1", "P2"]}
+    assert calls == []  # fully cached -> no fetch
+
+
+@pytest.mark.slow
+@pytest.mark.network
+def test_search_accessions_real_uniprot(tmp_path):
+    # Hits the live UniProt search API; deselected from `just check`, run with `just test-slow`.
+    out = search_accessions(
+        [("1.1.1.1", "Escherichia coli")], cache_path=tmp_path / "a.json", sleep=0
+    )
+    accs = out[("1.1.1.1", "Escherichia coli")]
+    assert accs and all(a[0].isalpha() for a in accs)  # alcohol dehydrogenase accessions
 
 
 @pytest.mark.slow
