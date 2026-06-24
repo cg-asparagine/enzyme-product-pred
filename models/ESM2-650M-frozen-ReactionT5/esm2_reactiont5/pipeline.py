@@ -79,7 +79,7 @@ def train_model(config: TrainConfig) -> str:
             torch.save(self.args, out / "training_args.bin")
 
     device = _resolve_device(config)
-    tokenizer = AutoTokenizer.from_pretrained(config.base_checkpoint)
+    tokenizer = AutoTokenizer.from_pretrained(config.init_checkpoint or config.base_checkpoint)
     train_df = _subset(load_reactions(config.dataset_dir, "train"), config.max_train_samples)
     valid_df = _subset(load_reactions(config.dataset_dir, "valid"), config.max_eval_samples)
     embeddings = _needed_embeddings(config, [train_df, valid_df], device)
@@ -88,7 +88,12 @@ def train_model(config: TrainConfig) -> str:
         train_df, embeddings, tokenizer, config.max_input_length, config.max_target_length
     )
     collator = ProteinSeq2SeqCollator(tokenizer)
-    model = ReactionT5WithProtein.from_base(config.base_checkpoint, config.esm_dim)
+    # Fine-tune from a saved wrapper (ReactionT5 + projection) when given, else from base.
+    model = (
+        ReactionT5WithProtein.from_pretrained_dir(config.init_checkpoint, config.esm_dim)
+        if config.init_checkpoint
+        else ReactionT5WithProtein.from_base(config.base_checkpoint, config.esm_dim)
+    )
 
     args = TrainingArguments(
         output_dir=config.output_dir,

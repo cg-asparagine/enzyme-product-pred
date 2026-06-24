@@ -18,6 +18,7 @@ class TrainConfig:
 
     # Model
     base_checkpoint: str = "sagawa/ReactionT5v2-forward"
+    init_checkpoint: str = ""  # if set, fine-tune from this saved wrapper dir instead of base
     esm_dim: int = 1280
 
     # Training
@@ -34,8 +35,8 @@ class TrainConfig:
     device: str = "auto"  # "auto" -> cuda/mps/cpu; force with "cpu"/"mps"/"cuda"
 
     # Generation (eval)
-    num_beams: int = 5
-    num_return_sequences: int = 5  # ranked predictions per reaction (<= num_beams)
+    num_beams: int = 10
+    num_return_sequences: int = 10  # ranked predictions per reaction (<= num_beams)
 
     # IO
     output_dir: str = "models/ESM2-650M-frozen-ReactionT5/checkpoints"
@@ -60,4 +61,21 @@ SMOKE_CONFIG = replace(
     num_return_sequences=2,
     device="cpu",  # tiny + portable; avoids contending with an MPS precompute
     output_dir="models/ESM2-650M-frozen-ReactionT5/checkpoints-smoke",
+)
+
+
+# Continue-fine-tune the EnzymeMap-trained model on CYP-conditioned drug metabolism
+# (Victorien-CYP-metabolites). ESM-2 stays frozen; only ReactionT5 + the projection
+# update. Small dataset -> lower LR / few epochs; save only the final model.
+FINETUNE_CONFIG = replace(
+    TrainConfig(),
+    dataset_dir="data/Victorien-CYP-metabolites/processed",
+    dataset_id="victorien-cyp-metabolites-v1",
+    init_checkpoint="models/ESM2-650M-frozen-ReactionT5/checkpoints-init",
+    output_dir="models/ESM2-650M-frozen-ReactionT5/checkpoints-victorien-ft",
+    learning_rate=5e-5,
+    num_train_epochs=5.0,
+    warmup_ratio=0.1,
+    logging_steps=20,
+    save_strategy="no",
 )
