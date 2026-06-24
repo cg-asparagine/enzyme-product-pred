@@ -41,6 +41,22 @@ def _needed_embeddings(
     return ensure_embeddings(config.embedding_cache, id_to_seq, device=device)
 
 
+def _shuffle_enzyme_conditioning(frame: Any, seed: int) -> Any:
+    """Control: permute the ``(uniprot_id, sequence)`` enzyme pair across rows.
+
+    Breaks the substrate->enzyme correspondence (each reaction is conditioned on
+    some other row's enzyme) while keeping every id<->sequence consistent so the
+    embedding lookup still resolves. Reactants and reference products are left in
+    place, so a score drop vs. the unshuffled run isolates the enzyme's effect.
+    """
+    pairs = list(zip(frame["uniprot_id"].tolist(), frame["sequence"].tolist(), strict=True))
+    order = np.random.default_rng(seed).permutation(len(pairs))
+    frame = frame.copy()
+    frame["uniprot_id"] = [pairs[i][0] for i in order]
+    frame["sequence"] = [pairs[i][1] for i in order]
+    return frame
+
+
 def train_model(config: TrainConfig) -> str:
     from transformers import AutoTokenizer, Trainer, TrainingArguments
 
@@ -151,7 +167,10 @@ def _generate(
 
 
 def evaluate_run(
-    config: TrainConfig, model_dir: str | None = None, run_root: str = "experiments"
+    config: TrainConfig,
+    model_dir: str | None = None,
+    run_root: str = "experiments",
+    shuffle_enzymes: bool = False,
 ) -> str:
     from transformers import AutoTokenizer
 
@@ -163,6 +182,8 @@ def evaluate_run(
     model.eval()
 
     test_df = _subset(load_reactions(config.dataset_dir, "test"), config.max_eval_samples)
+    if shuffle_enzymes:  # control: see whether conditioning on the correct enzyme helps
+        test_df = _shuffle_enzyme_conditioning(test_df, seed=config.seed)
     embeddings = _needed_embeddings(config, [test_df], device)
     references = [str(p).split(".") for p in test_df["product_smiles"]]
     predictions = _generate(model, tokenizer, test_df, embeddings, config, device)
@@ -193,10 +214,16 @@ def evaluate_run(
             "learning_rate": config.learning_rate,
             "num_train_epochs": config.num_train_epochs,
         },
-        dataset_id=config.dataset_id,
+        dataset_id=config.dataset_id + ("-shuffled-enzymes" if shuffle_enzymes else ""),
         dataset_hash=content_hash(load_reactions(config.dataset_dir)),
         notes="ReactionT5 fine-tuned with a frozen ESM-2 650M enzyme-sequence embedding "
-        "prepended to the encoder.",
+        "prepended to the encoder."
+        + (
+            " CONTROL: enzyme conditioning permuted across test rows (fixed seed) to "
+            "measure whether the correct enzyme helps."
+            if shuffle_enzymes
+            else ""
+        ),
     )
     run_dir = evaluate_model(inputs=inputs, metadata=metadata, run_root=run_root)
     return str(run_dir)
