@@ -1,9 +1,12 @@
+import http.client
 import json
 
 import pytest
 
+from epp_core.data import uniprot
 from epp_core.data.uniprot import (
     _parse_search_tsv,
+    _search_one,
     fetch_sequences,
     parse_fasta,
     search_accessions,
@@ -91,6 +94,35 @@ def test_parse_search_tsv_drops_header():
     assert _parse_search_tsv("Entry\nP1\nP2\n") == ["P1", "P2"]
     assert _parse_search_tsv("Entry\n") == []  # no hits -> header only
     assert _parse_search_tsv("") == []
+
+
+def test_search_one_retries_on_dropped_connection(monkeypatch):
+    # RemoteDisconnected is not a URLError; a crash here is what killed the full run.
+    # It subclasses http.client.HTTPException, so the broadened net must retry it.
+    attempts: list[int] = []
+
+    class _FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return b"Entry\nP0A9Q7\nP25437\n"
+
+    def flaky_urlopen(request, timeout=None):
+        attempts.append(1)
+        if len(attempts) < 3:
+            raise http.client.RemoteDisconnected("Remote end closed connection")
+        return _FakeResponse()
+
+    monkeypatch.setattr(uniprot.urllib.request, "urlopen", flaky_urlopen)
+    monkeypatch.setattr(uniprot.time, "sleep", lambda *_: None)  # no real backoff wait
+
+    out = _search_one("ec:1.1.1.1", size=5, retries=3)
+    assert out == ["P0A9Q7", "P25437"]  # recovered on the 3rd attempt
+    assert len(attempts) == 3
 
 
 def test_search_accessions_caches_and_skips_refetch(tmp_path):

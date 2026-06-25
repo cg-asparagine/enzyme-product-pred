@@ -15,9 +15,9 @@ results back into ``fetch_sequences`` to attach sequences.
 
 from __future__ import annotations
 
+import http.client
 import json
 import time
-import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterable
@@ -66,7 +66,7 @@ def _http_fetch(
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 return parse_fasta(response.read().decode("utf-8"))
-        except (urllib.error.URLError, TimeoutError) as error:  # network errors / 5xx
+        except (OSError, http.client.HTTPException) as error:  # network errors / 5xx / dropped conn
             last_error = error
             if attempt < retries - 1:
                 time.sleep(2.0 * (attempt + 1))
@@ -138,7 +138,7 @@ def _uniparc_fetch_one(accession: str, *, timeout: float = 60.0, retries: int = 
             if not results:
                 return ""
             return (results[0].get("sequence") or {}).get("value") or ""
-        except (urllib.error.URLError, TimeoutError) as error:
+        except (OSError, http.client.HTTPException) as error:  # network errors / 5xx / dropped conn
             last_error = error
             if attempt < retries - 1:
                 time.sleep(2.0 * (attempt + 1))
@@ -215,7 +215,7 @@ def _search_one(query: str, *, size: int, timeout: float = 60.0, retries: int = 
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 return _parse_search_tsv(response.read().decode("utf-8"))
-        except (urllib.error.URLError, TimeoutError) as error:  # network errors / 5xx
+        except (OSError, http.client.HTTPException) as error:  # network errors / 5xx / dropped conn
             last_error = error
             if attempt < retries - 1:
                 time.sleep(2.0 * (attempt + 1))
