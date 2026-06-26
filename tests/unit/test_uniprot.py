@@ -147,6 +147,28 @@ def test_search_accessions_caches_and_skips_refetch(tmp_path):
     assert calls == []  # fully cached -> no fetch
 
 
+def test_search_accessions_skip_errors_leaves_pair_uncached(tmp_path):
+    # A pair that errors past retries must NOT be cached (so a re-run retries it),
+    # and must not crash the run when skip_errors=True.
+    def fake(ec: str, organism: str) -> list[str]:
+        if organism == "Boom":
+            raise RuntimeError("UniProt search failed after retries")
+        return ["P1"]
+
+    cache = tmp_path / "acc.json"
+    queries = [("1.1.1.1", "OK"), ("9.9.9.9", "Boom")]
+
+    # Without skip_errors the failure propagates.
+    with pytest.raises(RuntimeError):
+        search_accessions(queries, cache_path=cache, fetch_one=fake, sleep=0)
+
+    out = search_accessions(queries, cache_path=cache, fetch_one=fake, sleep=0, skip_errors=True)
+    assert out == {("1.1.1.1", "OK"): ["P1"]}  # good pair resolved
+    cached = json.loads(cache.read_text())
+    assert "9.9.9.9\tBoom" not in cached  # errored pair left uncached -> retried next run
+    assert cached["1.1.1.1\tOK"] == ["P1"]
+
+
 @pytest.mark.slow
 @pytest.mark.network
 def test_search_accessions_real_uniprot(tmp_path):

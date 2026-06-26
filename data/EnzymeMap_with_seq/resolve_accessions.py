@@ -39,6 +39,7 @@ UNIPROT_DBS = ("uniprot", "swissprot")
 # Resolver settings (strict exact-organism match; Swiss-Prot first).
 MAX_PER_QUERY = 5
 PREFER_REVIEWED = True
+RETRIES = 5  # transient UniProt SSL/connection drops are common over a ~31k-pair run
 SLEEP = 0.1
 
 
@@ -94,7 +95,9 @@ def main() -> None:
         cache_path=ACC_CACHE,
         max_per_query=MAX_PER_QUERY,
         prefer_reviewed=PREFER_REVIEWED,
+        retries=RETRIES,
         sleep=SLEEP,
+        skip_errors=True,  # one bad pair shouldn't kill a multi-hour run; re-run retries skips
     )
 
     rows = [

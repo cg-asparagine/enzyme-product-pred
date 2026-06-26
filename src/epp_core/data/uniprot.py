@@ -257,8 +257,10 @@ def search_accessions(
     cache_path: str | Path,
     max_per_query: int = 5,
     prefer_reviewed: bool = True,
+    retries: int = 3,
     sleep: float = 0.2,
     save_every: int = 25,
+    skip_errors: bool = False,
     fetch_one: Callable[[str, str], list[str]] | None = None,
 ) -> dict[tuple[str, str], list[str]]:
     """Resolve ``(ec_num, organism)`` pairs to UniProtKB accessions.
@@ -271,11 +273,20 @@ def search_accessions(
     in tests. Pairs with no hit are cached as ``[]`` and omitted from the returned
     mapping. Returns ``{(ec, organism): [accession, ...]}``; pass the flattened
     accessions to ``fetch_sequences`` to attach sequences.
+
+    With ``skip_errors`` (for long unattended runs), a pair that still fails after
+    ``retries`` is left **uncached** and skipped rather than crashing the whole run,
+    so a later re-run retries just those pairs (it is *not* recorded as a miss). The
+    count of skipped pairs is logged. Returns when all pairs are done.
     """
 
     def _default(ec: str, organism: str) -> list[str]:
         return _resolve_accessions_one(
-            ec, organism, max_per_query=max_per_query, prefer_reviewed=prefer_reviewed
+            ec,
+            organism,
+            max_per_query=max_per_query,
+            prefer_reviewed=prefer_reviewed,
+            retries=retries,
         )
 
     fetch = fetch_one or _default
@@ -289,13 +300,22 @@ def search_accessions(
         with cache_path.open("w") as f:
             json.dump(cache, f)
 
+    n_skipped = 0
     for i, (ec, organism) in enumerate(todo):
-        cache[_query_key(ec, organism)] = fetch(ec, organism)
+        try:
+            cache[_query_key(ec, organism)] = fetch(ec, organism)
+        except (OSError, http.client.HTTPException, RuntimeError):
+            if not skip_errors:
+                raise
+            n_skipped += 1  # left uncached on purpose -> retried on the next run
+            continue
         if (i + 1) % save_every == 0:
             _save()
         if sleep:
             time.sleep(sleep)
     if todo:
         _save()
+    if n_skipped:
+        print(f"  search_accessions: skipped {n_skipped} pairs after retries (re-run to retry)")
 
     return {q: cache[_query_key(*q)] for q in wanted if cache.get(_query_key(*q))}
