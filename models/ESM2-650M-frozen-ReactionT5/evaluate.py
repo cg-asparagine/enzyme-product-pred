@@ -20,11 +20,16 @@ def main() -> None:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from dataclasses import replace
 
-    from esm2_reactiont5.config import SMOKE_CONFIG, TrainConfig
+    from esm2_reactiont5.config import SMOKE_CONFIG, TrainConfig, with_plus_dataset
     from esm2_reactiont5.pipeline import evaluate_run
 
     parser = argparse.ArgumentParser(description="Evaluate ESM2-650M-frozen-ReactionT5.")
     parser.add_argument("--smoke", action="store_true", help="tiny config for a quick CPU/MPS run")
+    parser.add_argument(
+        "--plus",
+        action="store_true",
+        help="evaluate the EnzymeMap_with_seq_plus model (checkpoints-plus, plus test split)",
+    )
     parser.add_argument("--model-dir", default=None, help="trained model dir (defaults to config)")
     parser.add_argument(
         "--dataset-dir",
@@ -44,6 +49,8 @@ def main() -> None:
     args = parser.parse_args()
 
     config = SMOKE_CONFIG if args.smoke else TrainConfig()
+    if args.plus:
+        config = with_plus_dataset(config)
     if args.dataset_dir is not None:
         dataset_id = args.dataset_id or Path(args.dataset_dir).resolve().parent.name
         config = replace(config, dataset_dir=args.dataset_dir, dataset_id=dataset_id)

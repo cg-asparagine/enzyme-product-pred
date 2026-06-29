@@ -61,3 +61,27 @@ SMOKE_CONFIG = replace(
     device="cpu",  # tiny + portable; avoids contending with an MPS precompute
     output_dir="models/ESM2-650M-frozen-ReactionT5/checkpoints-smoke",
 )
+
+# The expanded dataset (curated + resolved accessions). See
+# data/EnzymeMap_with_seq_plus/README.md.
+PLUS_DATASET_DIR = "data/EnzymeMap_with_seq_plus/processed"
+PLUS_DATASET_ID = "enzymemap-with-seq-plus-v1"
+
+
+def with_plus_dataset(config: TrainConfig) -> TrainConfig:
+    """Point a config at EnzymeMap_with_seq_plus with a distinct ``-plus`` checkpoint dir.
+
+    Composes with ``SMOKE_CONFIG`` (-> ``checkpoints-smoke-plus``). The embedding cache
+    is left unchanged on purpose: it is keyed by UniProt id, so the curated proteins
+    already cached are reused and only the new (resolved) ones are embedded.
+    """
+    return replace(
+        config,
+        dataset_dir=PLUS_DATASET_DIR,
+        dataset_id=PLUS_DATASET_ID,
+        output_dir=config.output_dir + "-plus",
+    )
+
+
+# Full-size training on the expanded dataset (`just train ... --plus`).
+PLUS_CONFIG = with_plus_dataset(TrainConfig())

@@ -31,6 +31,28 @@ precompute_embeddings('data/EnzymeMap_with_seq/processed', \
 'models/ESM2-650M-frozen-ReactionT5/embeddings/esm2_t33_650m.npz')"
 ```
 
+### Expanded dataset (`--plus`)
+
+Append `--plus` to train/evaluate on
+[`EnzymeMap_with_seq_plus`](../../data/EnzymeMap_with_seq_plus/README.md) (curated +
+resolved accessions, ~114k examples vs ~51k). Checkpoints go to `checkpoints-plus`
+(the curated model is untouched); the embedding cache is **shared** (keyed by UniProt
+id, so only the new proteins are embedded — ~12.5k on top of the curated ~15k).
+
+```
+# precompute the new proteins into the shared cache (resumable; reuses curated embeddings)
+uv run python -c "import sys; sys.path.insert(0, 'models/ESM2-650M-frozen-ReactionT5'); \
+from esm2_reactiont5.embeddings import precompute_embeddings; \
+precompute_embeddings('data/EnzymeMap_with_seq_plus/processed', \
+'models/ESM2-650M-frozen-ReactionT5/embeddings/esm2_t33_650m.npz')"
+
+just train ESM2-650M-frozen-ReactionT5 --plus      # -> checkpoints-plus
+just evaluate ESM2-650M-frozen-ReactionT5 --plus   # eval on the plus test split
+```
+
+For the honest **new-enzyme** comparison, evaluate on the enzyme-cluster split
+(`enzyme_split`) — the expanded enzyme diversity should help most there.
+
 ## Layout
 
 - `esm2_reactiont5/embeddings.py` — frozen ESM-2 embedding + `.npz` cache.
