@@ -64,7 +64,7 @@ exclude = [
 # Model folders are script dirs with a uniquely-named inner package; add each to
 # extraPaths so its intra-package imports resolve for pyright. (Populated as
 # models are added.)
-extraPaths = ["models/ESM2-650M-frozen-ReactionT5"]
+extraPaths = ["models/ESM2-650M-frozen-ReactionT5", "models/ESM2-150M-ReactionT5"]
 venvPath = "."
 venv = ".venv"
 

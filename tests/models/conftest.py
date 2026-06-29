@@ -6,7 +6,7 @@ from pathlib import Path
 
 _MODELS_DIR = Path(__file__).resolve().parents[2] / "models"
 
-for _name in ("ESM2-650M-frozen-ReactionT5",):
+for _name in ("ESM2-650M-frozen-ReactionT5", "ESM2-150M-ReactionT5"):
     _path = _MODELS_DIR / _name
     if _path.is_dir() and str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
