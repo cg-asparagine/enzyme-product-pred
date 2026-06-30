@@ -1,18 +1,30 @@
 """Build EnzymeMap_with_seq_plus: a superset of EnzymeMap_with_seq that also includes
-reactions whose enzyme had no curated UniProt accession, recovered by resolving the
-reaction's (EC number, organism) to candidate UniProtKB accessions.
+reactions whose enzyme had no curated UniProt accession (recovered by resolving the
+reaction's (EC number, organism) to candidate UniProtKB accessions), plus curated
+cytochrome-P450 (CYP) reactions from any organism.
 
-Two provenances, distinguished by the ``accession_source`` column:
+Three provenances, distinguished by the ``accession_source`` column:
 - ``curated``  — the accession came from the raw CSV's ``protein_refs`` (a direct
   BRENDA -> UniProt link), exactly as in EnzymeMap_with_seq.
 - ``resolved`` — the row had no accession; its (EC, organism) was looked up in
   ``resolved_accessions.csv`` (produced by ``resolve_accessions.py`` via
   ``epp_core.data.search_accessions``) and the best-reviewed candidate attached.
+- ``cyp``      — an all-organism CYP reaction from ``raw/cyp_reactions.csv`` (the
+  AllOrganism-CYP table copied from the sibling metabolite-prediction repo). The
+  enzyme protein sequence is inline (the source ``blast`` column), so these rows need
+  no UniProt fetch. ``organism_class`` tags each human/animal/plant/microorganism.
 
 Resolved accessions are candidate enzymes of the right (EC, organism) — correct
 activity + species — but are NOT verified to catalyze the specific reaction. Filter
 on ``accession_source == "curated"`` for a high-precision cut; use ``resolved`` rows
 to expand training coverage. See README.md.
+
+**Human CYP rows are reserved for testing**: every ``accession_source == "cyp"`` row
+with ``organism_class == "human"`` is forced into ``split == "test"`` and
+``enzyme_split == "test"`` (whole reaction-group / enzyme-cluster moves, so neither
+split leaks). Non-human CYP rows flow through the normal grouped split as training
+augmentation. The held-out human CYP eval set is exactly
+``(accession_source == "cyp") & (organism_class == "human")``.
 
 Reuses EnzymeMap's raw CSV and EnzymeMap_with_seq's sequence caches + resolved table
 (one source of truth each). ``processed/`` is git-ignored. Run with
@@ -50,9 +62,16 @@ PROCESSED = HERE / "processed"
 SEQ_CACHE = SIBLING / "raw" / "uniprot_sequences.json"
 UNIPARC_CACHE = SIBLING / "raw" / "uniparc_sequences.json"
 RESOLVED_TABLE = SIBLING / "processed" / "resolved_accessions.csv"
+# Curated all-organism cytochrome-P450 reactions (enzyme sequence inline in `blast`),
+# copied from the sibling metabolite-prediction repo's
+# data/AllOrganism-CYP-v1/raw/reactions.csv. latin-1 / cp1252 encoded (not UTF-8).
+CYP_RAW = HERE / "raw" / "cyp_reactions.csv"
 
 DATASET_ID = "enzymemap-with-seq-plus-v1"
 SOURCE = "enzymemap-v2-brenda2023"
+CYP_SOURCE = "allorganism-cyp"
+# Synthetic rxn_idx for CYP rows so they never collide with EnzymeMap's 0..N indices.
+CYP_RXN_IDX_OFFSET = 100_000_000
 
 # --- Filters (must match EnzymeMap_with_seq + how resolved_accessions.csv was built) ---
 ONLY_SINGLE_STEP = True
@@ -88,6 +107,10 @@ EXTRA_COLS = [
     "steps",
     "uniprot_id",
     "accession_source",
+    # CYP rows carry an organism class (human/animal/plant/microorganism) and an inline
+    # protein sequence; EnzymeMap rows leave these "" (sequence is fetched post-build).
+    "organism_class",
+    "sequence",
 ]
 # One example per unique (canonical reaction, UniProt ID).
 DEDUP_EXTRA_COLS = ["uniprot_id"]
@@ -219,6 +242,95 @@ def load_resolved_records(
     return records
 
 
+def _clean_cyp(value: object) -> str:
+    """cyp_reactions.csv cell cleaner: NaN/None and the file's ``/`` placeholder -> ``""``."""
+    if value is None or bool(pd.isna(value)):
+        return ""
+    text = str(value).strip()
+    return "" if text in ("", "/") else text
+
+
+def _is_human_cyp(txid: object, species1: object) -> bool:
+    """True for a CYP row of human origin (Txid 9606 or ``Species1`` contains "Homo sapiens")."""
+    if txid is not None and not bool(pd.isna(txid)):
+        try:
+            if int(txid) == 9606:  # type: ignore[arg-type]
+                return True
+        except (TypeError, ValueError):
+            pass
+    return "homo sapiens" in _clean_cyp(species1).lower()
+
+
+def _organism_class(txid: object, species1: object, species: object) -> str:
+    """human / animal / plant / microorganism for a CYP row (``""`` if unknown). Human
+    (Txid 9606 / "Homo sapiens") overrides the coarser ``Species`` column."""
+    if _is_human_cyp(txid, species1):
+        return "human"
+    cls = _clean_cyp(species).lower()
+    return cls if cls in ("animal", "plant", "microorganism") else ""
+
+
+def load_cyp_records(cyp_raw: pd.DataFrame) -> list[dict]:
+    """CYP path: one record per usable cytochrome-P450 reaction from cyp_reactions.csv.
+
+    Each row's primary ``Substrate1 -> Product1`` transformation is taken (slots 2+ are
+    cofactors: O2 / NADPH / H2O ...); the enzyme protein sequence is inline in ``blast``,
+    so these rows need no UniProt fetch. ``accession_source="cyp"``; ``organism_class``
+    tags human/animal/plant/microorganism (human rows are later forced to the test split).
+    Rows missing a substrate, product, sequence, or enzyme key are skipped.
+    """
+    records: list[dict] = []
+    for i, (sub, pro, blast, symbol, uniprot, ec, species1, species, txid) in enumerate(
+        zip(
+            cyp_raw["sub_Smiles1"],
+            cyp_raw["pro_Smiles1"],
+            cyp_raw["blast"],
+            cyp_raw["Symbol"],
+            cyp_raw["Uniprot"],
+            cyp_raw["EC number"],
+            cyp_raw["Species1"],
+            cyp_raw["Species"],
+            cyp_raw["Txid"],
+            strict=True,
+        )
+    ):
+        reactant, product, sequence = _clean_cyp(sub), _clean_cyp(pro), _clean_cyp(blast)
+        if not reactant or not product or not sequence:
+            continue  # need a substrate, a product, and an enzyme sequence
+        accession = _clean_cyp(uniprot) or _clean_cyp(symbol)
+        if not accession:
+            continue  # need a stable embedding/dedup key
+        records.append(
+            {
+                "reaction": f"{reactant}>>{product}",
+                "rxn_idx": CYP_RXN_IDX_OFFSET + i,
+                "ec_num": _clean_cyp(ec),
+                "organism": _clean_cyp(species1),
+                "organism_class": _organism_class(txid, species1, species),
+                "direction": "forward",
+                "quality": 1.0,
+                "natural": True,
+                "steps": "single",
+                "uniprot_id": accession,
+                "accession_source": "cyp",
+                "sequence": sequence,
+            }
+        )
+    return records
+
+
+def force_groups_to_test(
+    df: pd.DataFrame, group_col: str, split_col: str, selector: pd.Series
+) -> pd.DataFrame:
+    """Move every row whose ``group_col`` value appears in any ``selector`` row to the test
+    split. ``selector`` is a boolean mask over ``df``. Whole groups move together, so a group
+    never straddles the partition — the existing leakage invariant still holds. Mutates and
+    returns ``df``."""
+    groups = df.loc[selector, group_col].unique()
+    df.loc[df[group_col].isin(groups), split_col] = "test"
+    return df
+
+
 def main() -> None:
     if not RAW.exists():
         raise FileNotFoundError(
@@ -230,19 +342,28 @@ def main() -> None:
             f"{RESOLVED_TABLE} not found. Run "
             f"`uv run python data/EnzymeMap_with_seq/resolve_accessions.py` first."
         )
+    if not CYP_RAW.exists():
+        raise FileNotFoundError(
+            f"{CYP_RAW} not found. Copy it from the sibling metabolite-prediction repo:\n"
+            f"  cp <…>/metabolite-prediction/data/AllOrganism-CYP-v1/raw/reactions.csv "
+            f"{CYP_RAW}\nSee data/EnzymeMap_with_seq_plus/README.md."
+        )
     PROCESSED.mkdir(exist_ok=True)
 
     raw = pd.read_csv(RAW)
     n_raw = len(raw)
     resolved_table = pd.read_csv(RESOLVED_TABLE)
+    cyp_raw = pd.read_csv(CYP_RAW, encoding="latin-1")  # cp1252, not UTF-8
 
-    # Curated records FIRST, then resolved: on a (reaction, uniprot_id) dedup collision
-    # build_reactions keeps the first-seen, so curated wins (accession_source is not in
-    # the dedup key).
+    # Curated FIRST, then resolved, then CYP: on a (reaction, uniprot_id) dedup collision
+    # build_reactions keeps the first-seen, so the EnzymeMap provenance wins (accession_source
+    # is not in the dedup key).
     records = load_records(raw)
     records += load_resolved_records(
         raw, resolved_table, explode_all=(MULTI_ACCESSION == "explode_all")
     )
+    cyp_records = load_cyp_records(cyp_raw)
+    records += cyp_records
 
     df, stats = build_reactions(
         records,
@@ -252,31 +373,35 @@ def main() -> None:
         dedup_extra_cols=DEDUP_EXTRA_COLS,
     )
     n_pairs = len(df)
+    n_unique_accessions = _to_int(df["uniprot_id"].nunique())
 
-    # Fetch + attach sequences; drop pairs whose accession didn't resolve. The accession
-    # set is curated ∪ resolved de-duped (a set), so shared accessions are fetched once
-    # and the EnzymeMap_with_seq cache makes already-seen ones free.
-    accessions = sorted(set(df["uniprot_id"]))
-    print(f"Fetching sequences for {len(accessions)} unique UniProt accessions (cached)...")
-    sequences = fetch_sequences(accessions, cache_path=SEQ_CACHE)
-    n_resolved_direct = len(sequences)
+    # CYP rows already carry an inline sequence (from the source `blast` column); only
+    # EnzymeMap curated/resolved rows (sequence == "") need a UniProt fetch. Fetch that
+    # subset once (the EnzymeMap_with_seq cache makes already-seen ones free), then fill
+    # only the empties so inline CYP sequences are left intact.
+    need = sorted({u for u, s in zip(df["uniprot_id"], df["sequence"], strict=True) if not s})
+    print(f"Fetching sequences for {len(need)} accessions without an inline sequence (cached)...")
+    fetched = fetch_sequences(need, cache_path=SEQ_CACHE)
+    n_resolved_direct = len(fetched)
 
     # Recover accessions the live endpoint dropped (obsolete/secondary) from the
     # UniParc archive — one lookup per missing accession (cached, resumable).
-    missing = [a for a in accessions if a not in sequences]
+    missing = [a for a in need if a not in fetched]
     n_recovered_uniparc = 0
     if missing:
         print(f"Recovering {len(missing)} missing accessions from the UniParc archive...")
         recovered = uniparc_sequences(missing, cache_path=UNIPARC_CACHE)
         n_recovered_uniparc = len(recovered)
-        sequences = {**sequences, **recovered}
+        fetched = {**fetched, **recovered}
         print(f"  recovered {n_recovered_uniparc} of {len(missing)} via UniParc")
 
-    df["sequence"] = df["uniprot_id"].map(lambda a: sequences.get(a, ""))
+    filled = df["uniprot_id"].map(lambda a: fetched.get(a, ""))
+    df["sequence"] = df["sequence"].where(df["sequence"] != "", filled)
     df = cast(pd.DataFrame, df[df["sequence"] != ""].reset_index(drop=True))
     df["seq_len"] = df["sequence"].str.len()
     n_dropped_no_seq = n_pairs - len(df)
     df["reaction_id"] = range(len(df))  # re-contiguous after the drop
+    df.loc[df["accession_source"] == "cyp", "source"] = CYP_SOURCE  # correct provenance tag
 
     # Group splits on the direction-collapsed reaction identity (no forward/reverse leak).
     df["_undirected"] = df.apply(
@@ -286,10 +411,6 @@ def main() -> None:
         axis=1,
     )
     df = assign_splits(df, group_col="_undirected", fractions=SPLIT_FRACTIONS, seed=SPLIT_SEED)
-    spans = df.groupby("_undirected")["split"].nunique()
-    if _to_int((spans > 1).sum()):
-        raise SystemExit("LEAKAGE DETECTED: a reaction identity spans multiple splits")
-    df = df.drop(columns=["_undirected"])
 
     # Enzyme-cluster split: cluster enzymes by sequence similarity, then assign
     # whole clusters to train/valid/test so homologous enzymes never straddle.
@@ -308,15 +429,42 @@ def main() -> None:
         seed=SPLIT_SEED,
         split_col="enzyme_split",
     )
+
+    # Reserve human CYP reactions for testing: force their whole reaction-group AND whole
+    # enzyme-cluster to the test split. Whole-group moves keep both splits leakage-free (the
+    # asserts below still hold). A few non-human / EnzymeMap rows may be pulled into test by
+    # sharing a group with a human CYP row (counted in the manifest).
+    human_cyp = (df["accession_source"] == "cyp") & (df["organism_class"] == "human")
+    n_human_forced_test = _to_int(human_cyp.sum())
+    split_before = df["split"].copy()
+    force_groups_to_test(df, "_undirected", "split", human_cyp)
+    force_groups_to_test(df, "enzyme_cluster", "enzyme_split", human_cyp)
+    n_pulled_into_test = _to_int(
+        (((df["split"] == "test") & (split_before != "test")) & ~human_cyp).sum()
+    )
+
+    spans = df.groupby("_undirected")["split"].nunique()
+    if _to_int((spans > 1).sum()):
+        raise SystemExit("LEAKAGE DETECTED: a reaction identity spans multiple splits")
     cluster_spans = df.groupby("enzyme_cluster")["enzyme_split"].nunique()
     if _to_int((cluster_spans > 1).sum()):
         raise SystemExit("LEAKAGE DETECTED: an enzyme cluster spans multiple splits")
+    if n_human_forced_test and not (
+        (df.loc[human_cyp, "split"] == "test").all()
+        and (df.loc[human_cyp, "enzyme_split"] == "test").all()
+    ):
+        raise SystemExit("human CYP rows are not fully held out in the test split")
+    df = df.drop(columns=["_undirected"])
 
     df.to_parquet(PROCESSED / "reactions.parquet", index=False)
 
     per_split = {s: _to_int((df["split"] == s).sum()) for s in VALID_SPLITS}
     n_curated = _to_int((df["accession_source"] == "curated").sum())
     n_resolved = _to_int((df["accession_source"] == "resolved").sum())
+    is_cyp = df["accession_source"] == "cyp"
+    n_cyp = _to_int(is_cyp.sum())
+    n_cyp_human = _to_int((is_cyp & (df["organism_class"] == "human")).sum())
+    n_cyp_non_human = n_cyp - n_cyp_human
     n_distinct_resolved_acc = len(
         {a for cell in resolved_table["accessions"] for a in str(cell).split(";") if a}
     )
@@ -334,7 +482,18 @@ def main() -> None:
             "uniprot_dbs": list(UNIPROT_DBS),
         },
         "multi_accession": MULTI_ACCESSION,
-        "accession_source_counts": {"curated": n_curated, "resolved": n_resolved},
+        "accession_source_counts": {"curated": n_curated, "resolved": n_resolved, "cyp": n_cyp},
+        "cyp": {
+            "raw_file": CYP_RAW.name,
+            "raw_sha256": sha256_file(CYP_RAW),
+            "source": CYP_SOURCE,
+            "n_cyp_rows_loaded": len(cyp_records),
+            "n_cyp_kept": n_cyp,
+            "n_cyp_non_human": n_cyp_non_human,
+            "n_cyp_human": n_cyp_human,
+            "n_human_forced_test": n_human_forced_test,
+            "n_rows_pulled_into_test_by_human_collision": n_pulled_into_test,
+        },
         "resolved_input": {
             "table_file": RESOLVED_TABLE.name,
             "table_sha256": sha256_file(RESOLVED_TABLE),
@@ -359,10 +518,11 @@ def main() -> None:
         "dedup_extra_cols": DEDUP_EXTRA_COLS,
         "build_stats": asdict(stats),
         "n_pairs_before_seq": n_pairs,
-        "n_unique_accessions": len(accessions),
+        "n_unique_accessions": n_unique_accessions,
+        "n_accessions_need_fetch": len(need),
         "n_resolved_direct": n_resolved_direct,
         "n_recovered_uniparc": n_recovered_uniparc,
-        "n_accessions_resolved": len(sequences),
+        "n_accessions_resolved": len(fetched),
         "n_dropped_no_seq": n_dropped_no_seq,
         "n_out": len(df),
         "per_split": per_split,
@@ -370,11 +530,14 @@ def main() -> None:
     }
     write_json(PROCESSED / "build_manifest.json", manifest)
 
-    print(f"Built {len(df)} (reaction, protein) examples from {n_raw} raw rows -> {PROCESSED}")
-    print(f"  provenance: {n_curated} curated, {n_resolved} resolved")
+    print(f"Built {len(df)} (reaction, protein) examples -> {PROCESSED}")
+    print(
+        f"  provenance: {n_curated} curated, {n_resolved} resolved, {n_cyp} cyp "
+        f"({n_cyp_non_human} non-human, {n_cyp_human} human held out for test)"
+    )
     print(f"  per split: {per_split}")
     print(
-        f"  accessions: {len(sequences)}/{len(accessions)} resolved, "
+        f"  fetched {len(fetched)}/{len(need)} non-inline accessions, "
         f"{n_dropped_no_seq} pairs dropped (no sequence)"
     )
 
